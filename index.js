@@ -106,57 +106,36 @@ async function getScreenInfo() {
         psScriptWin = psScript;
       }
       const psContent = `
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type @"
 using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-public class ScreenInfo {
+public class DPIAware {
     [DllImport("user32.dll")]
-    private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+    public static extern bool SetProcessDPIAware();
     
-    [DllImport("user32.dll")]
-    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfoEx lpmi);
-    
-    private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref Rect lprcMonitor, IntPtr dwData);
-    
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Rect {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-    
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-    private struct MonitorInfoEx {
-        public int Size;
-        public Rect Monitor;
-        public Rect WorkArea;
-        public uint Flags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
-        public string DeviceName;
-    }
-    
-    public static List<string> GetMonitorInfo() {
-        var monitors = new List<string>();
-        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, 
-            delegate(IntPtr hMonitor, IntPtr hdcMonitor, ref Rect lprcMonitor, IntPtr dwData) {
-                MonitorInfoEx info = new MonitorInfoEx();
-                info.Size = Marshal.SizeOf(info);
-                GetMonitorInfo(hMonitor, ref info);
-                monitors.Add(String.Format("{0},{1},{2},{3}", 
-                    info.Monitor.Left, info.Monitor.Top, 
-                    info.Monitor.Right - info.Monitor.Left, 
-                    info.Monitor.Bottom - info.Monitor.Top));
-                return true;
-            }, IntPtr.Zero);
-        return monitors;
-    }
+    [DllImport("shcore.dll")]
+    public static extern int SetProcessDpiAwareness(int value);
 }
 "@
-$monitors = [ScreenInfo]::GetMonitorInfo()
-$monitors | ForEach-Object { Write-Output $_ }
+
+# Set DPI awareness
+try {
+    [DPIAware]::SetProcessDpiAwareness(2) # Per-monitor DPI aware
+} catch {
+    [DPIAware]::SetProcessDPIAware()
+}
+
+# Get all screens with actual pixel dimensions
+$screens = [System.Windows.Forms.Screen]::AllScreens
+foreach ($screen in $screens) {
+    $x = $screen.Bounds.X
+    $y = $screen.Bounds.Y
+    $width = $screen.Bounds.Width
+    $height = $screen.Bounds.Height
+    Write-Output "$x,$y,$width,$height"
+}
 `;
       
       try {
@@ -166,21 +145,38 @@ $monitors | ForEach-Object { Write-Output $_ }
           ? `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${psScriptWin}"`
           : `powershell -NoProfile -ExecutionPolicy Bypass -File "${psScriptWin}"`;
         
-        const { stdout } = await execAsync(cmd, { timeout: 10000 });
+        const { stdout, stderr } = await execAsync(cmd, { timeout: 10000 });
+        if (stderr) {
+          console.error('Error in getScreenInfo:', stderr);
+        }
         await fs.unlink(psScript).catch(() => {});
+        
+        if (!stdout || stdout.trim() === '') {
+          return [];
+        }
         
         const monitors = stdout.trim().split('\n').filter(line => line.trim());
         
-        return monitors.map((monitor, index) => {
+        const monitorList = monitors.map((monitor, index) => {
           const [x, y, width, height] = monitor.trim().split(',').map(Number);
           return { index: index + 1, x, y, width, height };
         }).filter(m => m.width > 0 && m.height > 0);
+        
+        // Sort monitors by position (left to right, top to bottom)
+        monitorList.sort((a, b) => {
+          if (a.y !== b.y) return a.y - b.y;
+          return a.x - b.x;
+        });
+        
+        // Re-index after sorting
+        monitorList.forEach((m, i) => m.index = i + 1);
+        
+        return monitorList;
       } catch (error) {
         console.error('Error getting screen info:', error.message);
         await fs.unlink(psScript).catch(() => {});
-        return [{ index: 1, x: 0, y: 0, width: 1920, height: 1080 }];
+        return [];
       }
-      
     case 'darwin':
       try {
         const { stdout } = await execAsync('system_profiler SPDisplaysDataType -json');
@@ -195,7 +191,7 @@ $monitors | ForEach-Object { Write-Output $_ }
           height: parseInt(display._spdisplays_resolution?.split(' x ')[1] || 1080)
         }));
       } catch {
-        return [{ index: 1, x: 0, y: 0, width: 1920, height: 1080 }];
+        return [];
       }
       
     case 'linux':
@@ -217,13 +213,13 @@ $monitors | ForEach-Object { Write-Output $_ }
           }
         }
         
-        return monitors.length > 0 ? monitors : [{ index: 1, x: 0, y: 0, width: 1920, height: 1080 }];
+        return monitors;
       } catch {
-        return [{ index: 1, x: 0, y: 0, width: 1920, height: 1080 }];
+        return [];
       }
       
     default:
-      return [{ index: 1, x: 0, y: 0, width: 1920, height: 1080 }];
+      return [];
   }
 }
 
@@ -425,6 +421,7 @@ async function main() {
     const monitors = await getScreenInfo();
     const screenshots = [];
     
+    // Capture main desktop (all monitors combined)
     const mainScreenshot = await captureScreen();
     const mainOutput = path.join(outputDir, generateFilename('DesktopImage', format, timestamp));
     
@@ -439,28 +436,31 @@ async function main() {
     console.log(`✓ Main desktop screenshot saved: ${mainOutput}`);
     screenshots.push(mainOutput);
     
-    for (const monitor of monitors) {
-      console.log(`Capturing display ${monitor.index}...`);
+    // Capture individual displays
+    if (monitors && monitors.length > 0) {
+      console.log(`Capturing ${monitors.length} individual displays...`);
       
-      try {
-        const monitorScreenshot = await captureScreen(monitor);
-        const monitorOutput = path.join(
-          outputDir, 
-          generateFilename(`DisplayImage${monitor.index}`, format, timestamp)
-        );
-        
-        if (format !== 'png') {
-          await convertImage(monitorScreenshot, monitorOutput, format, quality);
-          await fs.unlink(monitorScreenshot);
-        } else {
-          await fs.copyFile(monitorScreenshot, monitorOutput);
-          await fs.unlink(monitorScreenshot);
+      for (const monitor of monitors) {
+        try {
+          const monitorScreenshot = await captureScreen(monitor);
+          const monitorOutput = path.join(
+            outputDir, 
+            generateFilename(`DisplayImage${monitor.index}`, format, timestamp)
+          );
+          
+          if (format !== 'png') {
+            await convertImage(monitorScreenshot, monitorOutput, format, quality);
+            await fs.unlink(monitorScreenshot);
+          } else {
+            await fs.copyFile(monitorScreenshot, monitorOutput);
+            await fs.unlink(monitorScreenshot);
+          }
+          
+          console.log(`✓ Display ${monitor.index} screenshot saved: ${monitorOutput}`);
+          screenshots.push(monitorOutput);
+        } catch (error) {
+          console.error(`✗ Failed to capture display ${monitor.index}: ${error.message}`);
         }
-        
-        console.log(`✓ Display ${monitor.index} screenshot saved: ${monitorOutput}`);
-        screenshots.push(monitorOutput);
-      } catch (error) {
-        console.error(`✗ Failed to capture display ${monitor.index}: ${error.message}`);
       }
     }
     
