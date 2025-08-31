@@ -1,0 +1,12 @@
+node_modules/
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+*.png
+*.jpg
+*.jpeg
+*.bmp
+!example*.png
+!example*.jpg
+package-lock.json
