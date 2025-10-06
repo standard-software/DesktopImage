@@ -6,6 +6,7 @@ A cross-platform CLI tool to capture desktop screenshots with automatic timestam
 
 - Captures full desktop screenshot
 - Captures individual screenshots for each display/monitor
+- **Selective display capture**: Capture specific displays only
 - Automatic timestamp-based file naming
 - Support for multiple image formats (PNG, JPG, JPEG, BMP)
 - Cross-platform support (Windows, macOS, Linux, WSL)
@@ -59,12 +60,23 @@ desktopimage [options]
 
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
+| `--display` | `-d` | Display number to capture (e.g., 1 for DisplayImage1 only) | All displays |
 | `--output` | `-o` | Output directory for screenshots | Current directory |
 | `--format` | `-f` | Image format (png, jpg, jpeg, bmp) | `png` |
 | `--quality` | `-q` | JPEG quality (1-100) | `100` |
 | `--help` | `-h` | Show help message | - |
 
 ### Examples
+
+Capture only Display 1:
+```bash
+desktopimage -d 1
+```
+
+Capture only Display 2 as JPEG:
+```bash
+desktopimage -d 2 -f jpg
+```
 
 Save screenshots to a specific directory:
 ```bash
@@ -79,6 +91,11 @@ desktopimage -f jpg -q 85
 Save to custom directory with BMP format:
 ```bash
 desktopimage -o /path/to/screenshots -f bmp
+```
+
+Capture Display 1 only and save as JPEG to specific directory:
+```bash
+desktopimage -d 1 -f jpg -q 90 -o ~/Screenshots
 ```
 
 ## File Naming
