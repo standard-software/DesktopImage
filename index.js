@@ -288,18 +288,17 @@ async function captureScreen(monitor = null) {
           ? `
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
-$x = ${Math.max(0, monitor.x)}
-$y = ${Math.max(0, monitor.y)}
+$x = ${monitor.x}
+$y = ${monitor.y}
 $width = ${monitor.width}
 $height = ${monitor.height}
 if ($width -le 0 -or $height -le 0) {
     Write-Error "Invalid dimensions: $width x $height"
     exit 1
 }
-$bounds = [System.Drawing.Rectangle]::FromLTRB($x, $y, ($x + $width), ($y + $height))
 $bitmap = New-Object System.Drawing.Bitmap($width, $height)
 $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-$graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+$graphics.CopyFromScreen($x, $y, 0, 0, [System.Drawing.Size]::new($width, $height))
 $bitmap.Save('${windowsTempFile.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Png)
 $graphics.Dispose()
 $bitmap.Dispose()
