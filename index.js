@@ -20,6 +20,11 @@ const { promisify } = require('util');
 const execAsync = promisify(exec);
 
 const argv = yargs
+  .option('display', {
+    alias: 'd',
+    type: 'number',
+    description: 'Display number to capture (e.g., 1 for DisplayImage1 only)'
+  })
   .option('output', {
     alias: 'o',
     type: 'string',
@@ -38,7 +43,7 @@ const argv = yargs
     default: 100,
     description: 'Image quality for JPEG (1-100)'
   })
-  .version('1.0.0')
+  .version('1.1.0')
   .alias('version', 'v')
   .help()
   .alias('help', 'h')
@@ -413,61 +418,91 @@ async function main() {
     const outputDir = argv.output || process.cwd();
     const format = argv.format;
     const quality = argv.quality;
-    
+    const displayNumber = argv.display;
+
     await fs.mkdir(outputDir, { recursive: true });
-    
-    console.log('Capturing desktop screenshot...');
-    
+
     const monitors = await getScreenInfo();
     const screenshots = [];
-    
-    // Capture main desktop (all monitors combined)
-    const mainScreenshot = await captureScreen();
-    const mainOutput = path.join(outputDir, generateFilename('DesktopImage', format, timestamp));
-    
-    if (format !== 'png') {
-      await convertImage(mainScreenshot, mainOutput, format, quality);
-      await fs.unlink(mainScreenshot);
+
+    // If display number is specified, only capture that display
+    if (displayNumber !== undefined) {
+      if (displayNumber < 1 || displayNumber > monitors.length) {
+        console.error(`Error: Display ${displayNumber} not found. Available displays: 1-${monitors.length}`);
+        process.exit(1);
+      }
+
+      const monitor = monitors.find(m => m.index === displayNumber);
+      console.log(`Capturing display ${displayNumber}...`);
+
+      const monitorScreenshot = await captureScreen(monitor);
+      const monitorOutput = path.join(
+        outputDir,
+        generateFilename(`DisplayImage${monitor.index}`, format, timestamp)
+      );
+
+      if (format !== 'png') {
+        await convertImage(monitorScreenshot, monitorOutput, format, quality);
+        await fs.unlink(monitorScreenshot);
+      } else {
+        await fs.copyFile(monitorScreenshot, monitorOutput);
+        await fs.unlink(monitorScreenshot);
+      }
+
+      console.log(`✓ Display ${monitor.index} screenshot saved: ${monitorOutput}`);
+      screenshots.push(monitorOutput);
     } else {
-      await fs.copyFile(mainScreenshot, mainOutput);
-      await fs.unlink(mainScreenshot);
-    }
-    
-    console.log(`✓ Main desktop screenshot saved: ${mainOutput}`);
-    screenshots.push(mainOutput);
-    
-    // Capture individual displays
-    if (monitors && monitors.length > 0) {
-      console.log(`Capturing ${monitors.length} individual displays...`);
-      
-      for (const monitor of monitors) {
-        try {
-          const monitorScreenshot = await captureScreen(monitor);
-          const monitorOutput = path.join(
-            outputDir, 
-            generateFilename(`DisplayImage${monitor.index}`, format, timestamp)
-          );
-          
-          if (format !== 'png') {
-            await convertImage(monitorScreenshot, monitorOutput, format, quality);
-            await fs.unlink(monitorScreenshot);
-          } else {
-            await fs.copyFile(monitorScreenshot, monitorOutput);
-            await fs.unlink(monitorScreenshot);
+      // Capture all displays (existing behavior)
+      console.log('Capturing desktop screenshot...');
+
+      // Capture main desktop (all monitors combined)
+      const mainScreenshot = await captureScreen();
+      const mainOutput = path.join(outputDir, generateFilename('DesktopImage', format, timestamp));
+
+      if (format !== 'png') {
+        await convertImage(mainScreenshot, mainOutput, format, quality);
+        await fs.unlink(mainScreenshot);
+      } else {
+        await fs.copyFile(mainScreenshot, mainOutput);
+        await fs.unlink(mainScreenshot);
+      }
+
+      console.log(`✓ Main desktop screenshot saved: ${mainOutput}`);
+      screenshots.push(mainOutput);
+
+      // Capture individual displays
+      if (monitors && monitors.length > 0) {
+        console.log(`Capturing ${monitors.length} individual displays...`);
+
+        for (const monitor of monitors) {
+          try {
+            const monitorScreenshot = await captureScreen(monitor);
+            const monitorOutput = path.join(
+              outputDir,
+              generateFilename(`DisplayImage${monitor.index}`, format, timestamp)
+            );
+
+            if (format !== 'png') {
+              await convertImage(monitorScreenshot, monitorOutput, format, quality);
+              await fs.unlink(monitorScreenshot);
+            } else {
+              await fs.copyFile(monitorScreenshot, monitorOutput);
+              await fs.unlink(monitorScreenshot);
+            }
+
+            console.log(`✓ Display ${monitor.index} screenshot saved: ${monitorOutput}`);
+            screenshots.push(monitorOutput);
+          } catch (error) {
+            console.error(`✗ Failed to capture display ${monitor.index}: ${error.message}`);
           }
-          
-          console.log(`✓ Display ${monitor.index} screenshot saved: ${monitorOutput}`);
-          screenshots.push(monitorOutput);
-        } catch (error) {
-          console.error(`✗ Failed to capture display ${monitor.index}: ${error.message}`);
         }
       }
     }
-    
+
     console.log('\n✓ All screenshots captured successfully!');
     console.log('Files saved:');
     screenshots.forEach(file => console.log(`  - ${file}`));
-    
+
   } catch (error) {
     console.error('Error:', error.message);
     process.exit(1);
