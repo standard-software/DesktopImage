@@ -43,7 +43,7 @@ const argv = yargs
     default: 100,
     description: 'Image quality for JPEG (1-100)'
   })
-  .version('1.1.0')
+  .version('1.2.0')
   .alias('version', 'v')
   .help()
   .alias('help', 'h')
